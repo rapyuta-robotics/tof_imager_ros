@@ -113,17 +113,27 @@ class ToFImagerPublisher(Node):
             self.get_logger().error(f"Error getting ranging data: {e}")
             return None
 
-        distance_mm = np.array(data.distance_mm[:(self.res*self.res)]).reshape(self.res,self.res)
-        buf = np.empty((self.res, self.res, point_dim), dtype=np.float32)
-        it = np.nditer(distance_mm, flags=["multi_index"])
-        per_px = np.deg2rad(45) / self.res
-        for e in it:
-            w, h = it.multi_index
-            e = 0 if e < 0 else e
-            x = e*np.cos(w*per_px - np.deg2rad(45)/2 - np.deg2rad(90))/1000
-            y = e*np.sin(h*per_px - np.deg2rad(45)/2)/1000
-            z = e/1000
-            buf[w][h] = [x, y, z]
+        # Create a grid of coordinates (-3.5 to 3.5 for 8x8)
+        res = self.res
+        lin_coords = np.linspace(-(res - 1) / 2, (res - 1) / 2, res)
+        grid_x, grid_y = np.meshgrid(lin_coords, lin_coords)
+
+        # Calculate direction vectors (rectilinear projection)
+        tan_half_fov = np.tan(np.deg2rad(45 / 2))
+        vx = grid_x * (tan_half_fov / (res / 2))
+        vy = grid_y * (tan_half_fov / (res / 2))
+
+        # Process distance data
+        d = np.array(data.distance_mm[:64]).reshape(res, res)
+        d = np.maximum(d, 0) / 1000.0  # mm to meters
+
+        # Project distances into 3D space
+        x = d                       # The depth is constant for a flat wall
+        y = -d * vx                 # Scale horizontal by the tangent offset
+        z = -d * vy                 # Scale vertical by the tangent offset
+
+        # Stack into (res, res, 3) buffer
+        buf = np.stack((x, y, z), axis=-1).astype(np.float32)
         
         return buf, point_size
 
